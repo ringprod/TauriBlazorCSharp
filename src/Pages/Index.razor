@@ -1,0 +1,197 @@
+@page "/"
+@using src.Helpers
+@inject TauriBridge Bridge
+
+<PageTitle>Snippet Manager</PageTitle>
+
+<h1>Tauri + Blazor + C# Snippet Manager</h1>
+
+<div class="container-fluid">
+    <div class="row">
+        <!-- Left Column: Search and Results -->
+        <div class="col-md-4">
+            <h5>Search</h5>
+            <div class="input-group mb-3">
+                <input @bind="searchTerm" @bind:event="oninput" placeholder="Search snippets..." class="form-control" />
+                <button class="btn btn-primary" @onclick="SearchSnippets">Search</button>
+            </div>
+
+            @if (isSearching)
+            {
+                <p><em>Searching...</em></p>
+            }
+            else if (searchResults?.Any() == true)
+            {
+                <h5>Search Results</h5>
+                <div class="list-group">
+                    @foreach (var result in searchResults)
+                    {
+                        <button type="button" class="list-group-item list-group-item-action" @onclick="() => SelectSnippet(result.Snippet)">
+                            <strong>@result.Snippet?.Id</strong>
+                            <small class="d-block text-muted">@result.Match</small>
+                        </button>
+                    }
+                </div>
+            }
+            else if (hasSearched)
+            {
+                 <p><em>No results found.</em></p>
+            }
+        </div>
+
+        <!-- Right Column: Snippet Editor -->
+        <div class="col-md-8">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5>Editor</h5>
+                <div>
+                    <!-- NEW: "New" and "Save" buttons for the editor -->
+                    <button class="btn btn-secondary me-2" @onclick="CreateNewSnippet">New</button>
+                    <button class="btn btn-success" @onclick="SaveSnippet" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            <span> Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save</span>
+                        }
+                    </button>
+                </div>
+            </div>
+
+            <!-- NEW: Text area for editing the snippet content -->
+            <textarea class="form-control" @bind="activeSnippetText" @bind:event="oninput" rows="15" placeholder="Enter your snippet content here..."></textarea>
+            <small class="form-text text-muted">ID: @(activeSnippetId ?? "New Snippet")</small>
+        </div>
+    </div>
+
+    <!-- NEW: Status/Error Message Area -->
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="alert @statusMessageClass mt-3" role="alert">
+            @statusMessage
+        </div>
+    }
+</div>
+
+
+@code {
+    // --- Search State ---
+    private string searchTerm = "Tauri";
+    private bool isSearching = false;
+    private bool hasSearched = false;
+    private SearchResult[]? searchResults;
+
+    // --- Editor State ---
+    private string? activeSnippetId;
+    private string activeSnippetText = "";
+    private bool isSaving = false;
+
+    // --- UI State ---
+    private string? statusMessage;
+    private string statusMessageClass = "alert-info";
+
+
+    private async Task SearchSnippets()
+    {
+        isSearching = true;
+        hasSearched = true;
+        statusMessage = null;
+        searchResults = null;
+
+        try
+        {
+            var searchRequest = new { Text = searchTerm };
+            searchResults = await Bridge.InvokeAsync<SearchResult[]>("snippets", "search", searchRequest);
+        }
+        catch (Exception ex)
+        {
+            SetStatusMessage($"Search failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    // NEW: Method to handle saving the snippet
+    private async Task SaveSnippet()
+    {
+        if (string.IsNullOrWhiteSpace(activeSnippetText))
+        {
+            SetStatusMessage("Cannot save an empty snippet.", isError: true);
+            return;
+        }
+
+        isSaving = true;
+        statusMessage = null;
+
+        try
+        {
+            // The backend handles getting a new ID if `Id` is null
+            var snippetToSave = new Snippet { Id = activeSnippetId, Text = activeSnippetText };
+
+            // Call the 'save' action on the 'snippets' controller
+            await Bridge.InvokeAsync<object>("snippets", "save", snippetToSave);
+
+            // If it was a new snippet, the backend created an ID.
+            // We can't easily get it back in this design, so we just clear the editor.
+            // A more advanced implementation might return the saved snippet.
+            if (activeSnippetId == null)
+            {
+                CreateNewSnippet(); // Clear the editor for the next new snippet
+            }
+
+            SetStatusMessage("Snippet saved successfully!", isError: false);
+        }
+        catch (Exception ex)
+        {
+            SetStatusMessage($"Save failed: {ex.Message}", isError: true);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    // NEW: Method to load a selected snippet into the editor
+    private void SelectSnippet(Snippet? snippet)
+    {
+        if (snippet != null)
+        {
+            activeSnippetId = snippet.Id;
+            activeSnippetText = snippet.Text ?? "";
+            statusMessage = null;
+        }
+    }
+
+    // NEW: Method to clear the editor for a new snippet
+    private void CreateNewSnippet()
+    {
+        activeSnippetId = null;
+        activeSnippetText = "";
+        statusMessage = null;
+    }
+
+    // NEW: Helper to show status messages to the user
+    private void SetStatusMessage(string message, bool isError)
+    {
+        statusMessage = message;
+        statusMessageClass = isError ? "alert-danger" : "alert-success";
+    }
+
+
+    // --- Data Transfer Objects (DTOs) ---
+    public class SearchResult
+    {
+        public string? Match { get; set; }
+        public Snippet? Snippet { get; set; }
+    }
+
+    public class Snippet
+    {
+        public string? Id { get; set; }
+        public string? Text { get; set; }
+    }
+}
